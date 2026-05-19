@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { enviarCodigoWhatsApp } from '@/lib/twilio'
-
+import { getSupabaseAdmin } from '@/lib/supabase'
+const supabaseAdmin = getSupabaseAdmin()
 export async function POST(req: NextRequest) {
   try {
     const { whatsapp, codigo, nombre, placa } = await req.json()

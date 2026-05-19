@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-
+import { getSupabaseAdmin } from '@/lib/supabase'
+const supabaseAdmin = getSupabaseAdmin()
 export async function POST(req: NextRequest) {
   try {
     const { cliente_id, placa, empleado_id } = await req.json()
