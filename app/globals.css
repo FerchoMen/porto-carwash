@@ -3,7 +3,18 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --verde: #00A651;
+    --verde-dark: #007a3d;
+    --rojo: #E8002A;
+    --negro: #0a0a0a;
+    --gris-oscuro: #141414;
+    --gris-medio: #1e1e1e;
+    --gris-borde: #2a2a2a;
+  }
   body {
-    @apply bg-gray-50 text-gray-900;
+    background: #0a0a0a;
+    color: #ffffff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
   }
 }

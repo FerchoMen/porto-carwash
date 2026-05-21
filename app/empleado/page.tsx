@@ -2,10 +2,21 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import Image from 'next/image'
 
 type Session = { id: string; nombre: string; rol: string }
 type Cliente = { id: string; nombre: string; placa: string; whatsapp: string; lavadas_ciclo: number }
-type CodigoActivo = { codigo: string; placa: string; expiraEn: number }
+
+const S = {
+  screen: { minHeight: '100vh', background: '#0a0a0a', display: 'flex', flexDirection: 'column' as const },
+  header: { background: '#141414', borderBottom: '1px solid #1e1e1e', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky' as const, top: 0, zIndex: 10 },
+  content: { padding: 16, display: 'flex', flexDirection: 'column' as const, gap: 14, flex: 1 },
+  card: { background: '#141414', border: '1px solid #1e1e1e', borderRadius: 16, padding: 18 },
+  input: { background: '#0a0a0a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '12px 14px', fontSize: 14, color: '#fff', width: '100%' },
+  btnPrimary: { width: '100%', background: '#00A651', color: '#fff', border: 'none', padding: '14px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  btnSecondary: { width: '100%', background: 'transparent', color: '#00A651', border: '1px solid #00A65140', padding: '13px', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  label: { fontSize: 12, color: '#a0a0a0', fontWeight: 500, marginBottom: 6, display: 'block' as const },
+}
 
 export default function EmpleadoPage() {
   const [step, setStep] = useState<'login' | 'panel'>('login')
@@ -14,19 +25,16 @@ export default function EmpleadoPage() {
   const [session, setSession] = useState<Session | null>(null)
   const [loginError, setLoginError] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
-
   const [placa, setPlaca] = useState('')
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [buscando, setBuscando] = useState(false)
   const [buscarError, setBuscarError] = useState('')
-
-  const [codigoActivo, setCodigoActivo] = useState<CodigoActivo | null>(null)
+  const [codigoActivo, setCodigoActivo] = useState<string | null>(null)
   const [timerSeg, setTimerSeg] = useState(0)
   const [generando, setGenerando] = useState(false)
-  const [waStatus, setWaStatus] = useState<string>('')
+  const [waStatus, setWaStatus] = useState('')
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Verificar sesión activa al montar
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data }) => {
       if (data.session) await cargarEmpleado(data.session.user.id)
@@ -35,105 +43,55 @@ export default function EmpleadoPage() {
 
   async function cargarEmpleado(uid: string) {
     const { data } = await supabase.from('empleados').select('*').eq('id', uid).single()
-    if (data) {
-      setSession({ id: uid, nombre: data.nombre, rol: data.rol })
-      setStep('panel')
-    }
+    if (data) { setSession({ id: uid, nombre: data.nombre, rol: data.rol }); setStep('panel') }
+    if (data?.rol === 'admin' && typeof window !== 'undefined') window.location.href = '/admin'
   }
 
   async function login() {
-    setLoginLoading(true)
-    setLoginError('')
+    setLoginLoading(true); setLoginError('')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error || !data.user) {
-      setLoginError('Email o contraseña incorrectos')
-      setLoginLoading(false)
-      return
-    }
+    if (error || !data.user) { setLoginError('Email o contraseña incorrectos'); setLoginLoading(false); return }
     await cargarEmpleado(data.user.id)
     setLoginLoading(false)
   }
 
   async function logout() {
-    await supabase.auth.signOut()
-    setStep('login')
-    setSession(null)
-    setCliente(null)
-    cancelarCodigo()
+    await supabase.auth.signOut(); setStep('login'); setSession(null)
+    setCliente(null); cancelarCodigo()
   }
 
   async function buscarCliente() {
     if (!placa.trim()) return
-    setBuscando(true)
-    setBuscarError('')
-    setCliente(null)
-    setCodigoActivo(null)
-    setWaStatus('')
-
-    const { data } = await supabase
-      .from('clientes')
-      .select('id, nombre, placa, whatsapp, lavadas_ciclo')
-      .eq('placa', placa.trim().toUpperCase())
-      .single()
-
-    if (!data) {
-      setBuscarError('Placa no encontrada. El cliente debe registrarse primero en la app.')
-    } else {
-      setCliente(data)
-    }
+    setBuscando(true); setBuscarError(''); setCliente(null); setCodigoActivo(null); setWaStatus('')
+    const { data } = await supabase.from('clientes').select('id,nombre,placa,whatsapp,lavadas_ciclo').eq('placa', placa.trim().toUpperCase()).single()
+    if (!data) setBuscarError('Placa no encontrada. El cliente debe registrarse primero.')
+    else setCliente(data)
     setBuscando(false)
   }
 
   async function generarCodigo(enviarWA: boolean) {
     if (!cliente || !session) return
-    setGenerando(true)
-    setWaStatus('')
-
-    const res = await fetch('/api/codigos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cliente_id: cliente.id, placa: cliente.placa, empleado_id: session.id }),
-    })
+    setGenerando(true); setWaStatus('')
+    const res = await fetch('/api/codigos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cliente_id: cliente.id, placa: cliente.placa, empleado_id: session.id }) })
     const data = await res.json()
-
-    if (!data.ok) {
-      setWaStatus('❌ Error generando código: ' + data.error)
-      setGenerando(false)
-      return
-    }
-
-    setCodigoActivo({ codigo: data.codigo, placa: cliente.placa, expiraEn: Date.now() + 600_000 })
+    if (!data.ok) { setWaStatus('❌ Error: ' + data.error); setGenerando(false); return }
+    setCodigoActivo(data.codigo)
     iniciarTimer(600)
-
     if (enviarWA) {
       setWaStatus('Enviando WhatsApp...')
-      const waRes = await fetch('/api/whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          whatsapp: cliente.whatsapp,
-          codigo: data.codigo,
-          nombre: cliente.nombre,
-          placa: cliente.placa,
-        }),
-      })
+      const waRes = await fetch('/api/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whatsapp: cliente.whatsapp, codigo: data.codigo, nombre: cliente.nombre, placa: cliente.placa }) })
       const waData = await waRes.json()
-      setWaStatus(waData.ok ? '✅ Código enviado por WhatsApp' : '⚠️ No se pudo enviar WA: ' + waData.error)
+      setWaStatus(waData.ok ? '✅ Código enviado por WhatsApp a ' + cliente.whatsapp : '⚠️ No se pudo enviar WA')
     }
-
     setGenerando(false)
   }
 
-  function iniciarTimer(segundos: number) {
-    setTimerSeg(segundos)
+  function iniciarTimer(s: number) {
+    setTimerSeg(s)
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = setInterval(() => {
       setTimerSeg(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!)
-          setCodigoActivo(null)
-          return 0
-        }
+        if (prev <= 1) { clearInterval(timerRef.current!); setCodigoActivo(null); return 0 }
         return prev - 1
       })
     }, 1000)
@@ -141,166 +99,111 @@ export default function EmpleadoPage() {
 
   function cancelarCodigo() {
     if (timerRef.current) clearInterval(timerRef.current)
-    setCodigoActivo(null)
-    setTimerSeg(0)
-    setWaStatus('')
+    setCodigoActivo(null); setTimerSeg(0); setWaStatus('')
   }
 
-  const minutos = Math.floor(timerSeg / 60)
-  const segundos = timerSeg % 60
+  const min = Math.floor(timerSeg / 60), seg = timerSeg % 60
 
-  // Redirigir admin al panel de admin
-  if (session?.rol === 'admin') {
-    if (typeof window !== 'undefined') window.location.href = '/admin'
-    return null
-  }
+  if (step === 'login') return (
+    <div style={S.screen}>
+      <div style={S.header}>
+        <Link href="/"><button style={{ background: 'none', border: 'none', color: '#a0a0a0', cursor: 'pointer', fontSize: 20 }}>←</button></Link>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Acceso seguro</span>
+      </div>
+      <div style={S.content}>
+        <div style={{ textAlign: 'center', padding: '16px 0' }}>
+          <div style={{ width: 120, height: 100, position: 'relative', margin: '0 auto 16px' }}>
+            <Image src="/logo.png" alt="Porto Car Wash" fill style={{ objectFit: 'contain', mixBlendMode: 'lighten' }} />
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>Panel de empleados</div>
+          <div style={{ fontSize: 13, color: '#a0a0a0', marginTop: 4 }}>Solo personal autorizado</div>
+        </div>
+        <div style={S.card}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={S.label}>Email</label>
+            <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={S.label}>Contraseña</label>
+            <input style={S.input} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && login()} />
+          </div>
+          {loginError && <p style={{ fontSize: 13, color: '#E8002A', textAlign: 'center', marginBottom: 12 }}>{loginError}</p>}
+          <button style={S.btnPrimary} onClick={login} disabled={loginLoading}>{loginLoading ? 'Entrando...' : 'Entrar al sistema →'}</button>
+        </div>
+        <p style={{ fontSize: 11, color: '#333', textAlign: 'center' }}>Las cuentas las crea la administración</p>
+      </div>
+    </div>
+  )
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      <div className="bg-[#1a1a2e] text-white px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
-        <Link href="/" className="text-gray-300 hover:text-white text-xl">←</Link>
-        <span className="font-semibold">Panel empleado</span>
-        {session && (
-          <button onClick={logout} className="ml-auto text-xs text-gray-400 hover:text-white">
-            Salir
-          </button>
+    <div style={S.screen}>
+      <div style={S.header}>
+        <button style={{ background: 'none', border: 'none', color: '#a0a0a0', cursor: 'pointer', fontSize: 20 }} onClick={logout}>←</button>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Panel empleado</span>
+        <div style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 99, background: '#00A65120', color: '#00A651', border: '1px solid #00A65140' }}>{session?.nombre}</div>
+      </div>
+      <div style={S.content}>
+        {/* Status */}
+        <div style={{ background: '#141414', border: '1px solid #1e1e1e', borderRadius: 14, padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 11, color: '#a0a0a0' }}>Sesión activa</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>{session?.nombre}</div>
+          </div>
+          <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#00A651', boxShadow: '0 0 10px #00A651' }} />
+        </div>
+
+        {/* Buscar */}
+        <div style={S.card}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Registrar lavada</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input style={{ ...S.input, flex: 1, textTransform: 'uppercase' }} placeholder="Placa del vehículo" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && buscarCliente()} />
+            <button onClick={buscarCliente} disabled={buscando} style={{ background: '#00A651', border: 'none', color: '#fff', padding: '0 18px', borderRadius: 10, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>{buscando ? '...' : 'Buscar'}</button>
+          </div>
+          {buscarError && <p style={{ fontSize: 13, color: '#E8002A', marginTop: 10 }}>{buscarError}</p>}
+        </div>
+
+        {/* Cliente encontrado */}
+        {cliente && !codigoActivo && (
+          <div style={{ background: '#0a0a0a', border: '1px solid #00A65130', borderRadius: 16, padding: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>{cliente.nombre}</div>
+                <div style={{ fontSize: 13, color: '#00A651', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}>{cliente.placa}</div>
+                <div style={{ fontSize: 12, color: '#a0a0a0', marginTop: 4 }}>WA: {cliente.whatsapp}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: '#00A651' }}>{cliente.lavadas_ciclo % 10}/10</div>
+                <div style={{ fontSize: 11, color: '#a0a0a0' }}>lavadas</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
+              <button style={S.btnPrimary} onClick={() => generarCodigo(false)} disabled={generando}>{generando ? 'Generando...' : '📋 Mostrar código en pantalla'}</button>
+              <button style={S.btnSecondary} onClick={() => generarCodigo(true)} disabled={generando}>{generando ? 'Enviando...' : '📲 Generar y enviar por WhatsApp'}</button>
+            </div>
+            {waStatus && <p style={{ fontSize: 13, color: waStatus.includes('✅') ? '#00A651' : '#E8002A', marginTop: 10, textAlign: 'center' }}>{waStatus}</p>}
+          </div>
+        )}
+
+        {/* Código activo */}
+        {codigoActivo && (
+          <div style={S.card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Código generado</div>
+            <div style={{ background: '#0a0a0a', border: '1px solid #00A65130', borderRadius: 16, padding: 24, textAlign: 'center' }}>
+              <div style={{ fontSize: 56, fontWeight: 900, color: '#00A651', letterSpacing: 16, fontFamily: 'monospace' }}>{codigoActivo}</div>
+              <div style={{ fontSize: 12, color: '#a0a0a0', marginTop: 8 }}>Expira en {min}:{seg < 10 ? '0' : ''}{seg} · Un solo uso</div>
+            </div>
+            <div style={{ background: '#E8002A10', border: '1px solid #E8002A30', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10, marginTop: 14 }}>
+              <span>👁</span>
+              <p style={{ fontSize: 13, color: '#E8002A' }}>Muestra este código al cliente o envíalo por WhatsApp.</p>
+            </div>
+            {waStatus && <p style={{ fontSize: 13, color: waStatus.includes('✅') ? '#00A651' : '#a0a0a0', marginTop: 10, textAlign: 'center' }}>{waStatus}</p>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button onClick={() => generarCodigo(true)} disabled={generando} style={{ flex: 1, background: 'transparent', color: '#00A651', border: '1px solid #00A65140', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>📲 Reenviar WA</button>
+              <button onClick={cancelarCodigo} style={{ flex: 1, background: 'transparent', color: '#E8002A', border: '1px solid #E8002A30', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancelar</button>
+            </div>
+          </div>
         )}
       </div>
-
-      {step === 'login' && (
-        <div className="flex flex-col gap-4 p-4">
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h2 className="font-semibold text-gray-800 mb-4">Iniciar sesión</h2>
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Email</label>
-                <input
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#1a1a2e]"
-                  type="email"
-                  placeholder="tu@email.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Contraseña</label>
-                <input
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#1a1a2e]"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && login()}
-                />
-              </div>
-              {loginError && <p className="text-red-500 text-sm text-center">{loginError}</p>}
-              <button
-                className="w-full bg-[#1a1a2e] text-white py-3 rounded-xl font-semibold active:scale-95 transition-transform disabled:opacity-60"
-                onClick={login}
-                disabled={loginLoading}
-              >
-                {loginLoading ? 'Entrando...' : 'Entrar'}
-              </button>
-            </div>
-          </div>
-          <p className="text-xs text-gray-400 text-center">
-            Las cuentas las crea la administración
-          </p>
-        </div>
-      )}
-
-      {step === 'panel' && session && (
-        <div className="flex flex-col gap-4 p-4">
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex justify-between items-center">
-            <div>
-              <p className="text-xs text-gray-400">Sesión activa</p>
-              <p className="font-semibold text-gray-800">{session.nombre}</p>
-            </div>
-            <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-medium">Empleado</span>
-          </div>
-
-          {/* Buscar placa */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-800 mb-3">Registrar lavada</h3>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm uppercase focus:outline-none focus:border-[#1a1a2e]"
-                placeholder="Placa del vehículo"
-                value={placa}
-                onChange={e => setPlaca(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === 'Enter' && buscarCliente()}
-              />
-              <button
-                className="bg-[#1a1a2e] text-white px-4 rounded-xl text-sm font-medium active:scale-95 transition-transform disabled:opacity-60"
-                onClick={buscarCliente}
-                disabled={buscando}
-              >
-                {buscando ? '...' : 'Buscar'}
-              </button>
-            </div>
-            {buscarError && <p className="text-red-500 text-sm mt-2">{buscarError}</p>}
-          </div>
-
-          {/* Info cliente */}
-          {cliente && (
-            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <p className="font-bold text-gray-800">{cliente.nombre}</p>
-                  <p className="text-sm text-gray-500 font-mono">{cliente.placa}</p>
-                  <p className="text-xs text-gray-400 mt-1">WA: {cliente.whatsapp}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-[#1a1a2e]">{cliente.lavadas_ciclo}/10</p>
-                  <p className="text-xs text-gray-400">lavadas</p>
-                </div>
-              </div>
-
-              {/* Código activo */}
-              {codigoActivo ? (
-                <div>
-                  <div className="bg-[#1a1a2e] rounded-2xl p-5 text-center mb-3">
-                    <p className="text-gray-400 text-xs mb-1">Código de confirmación</p>
-                    <p className="text-5xl font-bold text-[#f0c040] tracking-widest font-mono">
-                      {codigoActivo.codigo}
-                    </p>
-                    <p className="text-gray-400 text-xs mt-2">
-                      Expira en {minutos}:{segundos < 10 ? '0' : ''}{segundos} · Un solo uso
-                    </p>
-                  </div>
-                  {waStatus && (
-                    <p className="text-sm text-center mb-3 text-gray-600">{waStatus}</p>
-                  )}
-                  <button
-                    className="w-full border border-red-200 text-red-500 py-2.5 rounded-xl text-sm font-medium"
-                    onClick={cancelarCodigo}
-                  >
-                    Cancelar código
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <button
-                    className="w-full bg-[#1a1a2e] text-white py-3 rounded-xl font-semibold active:scale-95 transition-transform disabled:opacity-60"
-                    onClick={() => generarCodigo(false)}
-                    disabled={generando}
-                  >
-                    {generando ? 'Generando...' : '📋 Mostrar código en pantalla'}
-                  </button>
-                  <button
-                    className="w-full bg-[#f0c040] text-[#1a1a2e] py-3 rounded-xl font-bold active:scale-95 transition-transform disabled:opacity-60"
-                    onClick={() => generarCodigo(true)}
-                    disabled={generando}
-                  >
-                    {generando ? 'Enviando...' : '📲 Enviar código por WhatsApp'}
-                  </button>
-                  {waStatus && <p className="text-sm text-center text-gray-600">{waStatus}</p>}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

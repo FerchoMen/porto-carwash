@@ -2,311 +2,276 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import Image from 'next/image'
 
 type Cliente = {
-  id: string
-  nombre: string
-  placa: string
-  whatsapp: string
-  lavadas_ciclo: number
-  lavadas_total: number
-  gratis_disponibles: number
+  id: string; nombre: string; placa: string; whatsapp: string
+  lavadas_ciclo: number; lavadas_total: number; gratis_disponibles: number
 }
+type Lavada = { id: string; created_at: string; fue_gratis: boolean; empleados: { nombre: string } }
 
-type Lavada = {
-  id: string
-  created_at: string
-  fue_gratis: boolean
-  empleados: { nombre: string }
+const S = {
+  screen: { minHeight: '100vh', background: '#0a0a0a', display: 'flex', flexDirection: 'column' as const },
+  header: { background: '#141414', borderBottom: '1px solid #1e1e1e', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky' as const, top: 0, zIndex: 10 },
+  backBtn: { background: 'none', border: 'none', color: '#a0a0a0', cursor: 'pointer', fontSize: 20, padding: '4px 8px', borderRadius: 8 },
+  content: { padding: 16, display: 'flex', flexDirection: 'column' as const, gap: 14, flex: 1 },
+  card: { background: '#141414', border: '1px solid #1e1e1e', borderRadius: 16, padding: 18 },
+  label: { fontSize: 12, color: '#a0a0a0', fontWeight: 500, marginBottom: 6, display: 'block' as const },
+  input: { background: '#0a0a0a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '12px 14px', fontSize: 14, color: '#fff', width: '100%' },
+  btnPrimary: { width: '100%', background: '#00A651', color: '#fff', border: 'none', padding: '14px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  btnSecondary: { width: '100%', background: 'transparent', color: '#00A651', border: '1px solid #00A65140', padding: '13px', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 4 },
+  tab: (active: boolean) => ({ flex: 1, padding: '12px 4px', fontSize: 13, fontWeight: 600, textAlign: 'center' as const, cursor: 'pointer', border: 'none', background: 'none', borderBottom: active ? '2px solid #00A651' : '2px solid transparent', color: active ? '#00A651' : '#a0a0a0' }),
 }
 
 export default function ClientePage() {
-  const [step, setStep] = useState<'form' | 'tarjeta'>('form')
+  const [tab, setTab] = useState<'registro' | 'misVehiculos'>('registro')
   const [nombre, setNombre] = useState('')
   const [placa, setPlaca] = useState('')
   const [whatsapp, setWhatsapp] = useState('')
-  const [cliente, setCliente] = useState<Cliente | null>(null)
+  const [waBuscar, setWaBuscar] = useState('')
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [clienteActual, setClienteActual] = useState<Cliente | null>(null)
   const [historial, setHistorial] = useState<Lavada[]>([])
+  const [vista, setVista] = useState<'form' | 'lista' | 'tarjeta'>('form')
   const [codigo, setCodigo] = useState(['', '', '', ''])
-  const [msg, setMsg] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null)
+  const [msg, setMsg] = useState<{ tipo: 'ok' | 'err'; texto: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [registrando, setRegistrando] = useState(false)
 
-  async function entrar() {
-    if (!nombre.trim() || !placa.trim() || !whatsapp.trim()) {
-      setMsg({ tipo: 'error', texto: 'Completa todos los campos' })
-      return
-    }
-    setLoading(true)
-    setMsg(null)
+  async function registrar() {
+    if (!nombre.trim() || !placa.trim() || !whatsapp.trim()) { setMsg({ tipo: 'err', texto: 'Completa todos los campos' }); return }
+    setLoading(true); setMsg(null)
     const placaUp = placa.trim().toUpperCase()
-
-    // Buscar cliente por placa
-    let { data: existing } = await supabase
-      .from('clientes')
-      .select('*')
-      .eq('placa', placaUp)
-      .single()
-
-    if (!existing) {
-      // Registrar nuevo cliente
-      const { data: nuevo, error } = await supabase
-        .from('clientes')
-        .insert({ nombre: nombre.trim(), placa: placaUp, whatsapp: whatsapp.trim() })
-        .select()
-        .single()
-      if (error) {
-        setMsg({ tipo: 'error', texto: 'Error al registrarse. Intenta de nuevo.' })
-        setLoading(false)
-        return
-      }
-      existing = nuevo
+    const { data: existing } = await supabase.from('clientes').select('*').eq('placa', placaUp).single()
+    if (existing) {
+      setMsg({ tipo: 'err', texto: '¡Esta placa ya está registrada! Búscala en "Mis vehículos".' })
+      setTimeout(() => { setTab('misVehiculos'); setMsg(null) }, 2000)
+      setLoading(false); return
     }
-
-    setCliente(existing)
-    await cargarHistorial(existing.id)
-    setStep('tarjeta')
+    const { data: nuevo, error } = await supabase.from('clientes').insert({ nombre: nombre.trim(), placa: placaUp, whatsapp: whatsapp.trim() }).select().single()
+    if (error) { setMsg({ tipo: 'err', texto: 'Error al registrar. Intenta de nuevo.' }); setLoading(false); return }
+    setMsg({ tipo: 'ok', texto: '✓ ¡Vehículo registrado exitosamente!' })
+    setTimeout(() => { setClienteActual(nuevo); cargarHistorial(nuevo.id); setVista('tarjeta'); setMsg(null) }, 1200)
     setLoading(false)
   }
 
+  async function buscarVehiculos() {
+    if (!waBuscar.trim()) { setMsg({ tipo: 'err', texto: 'Ingresa tu WhatsApp' }); return }
+    setLoading(true); setMsg(null)
+    const { data } = await supabase.from('clientes').select('*').eq('whatsapp', waBuscar.trim())
+    if (!data || data.length === 0) { setMsg({ tipo: 'err', texto: 'No encontramos vehículos con ese WhatsApp.' }); setLoading(false); return }
+    setClientes(data); setVista('lista'); setLoading(false)
+  }
+
   async function cargarHistorial(clienteId: string) {
-    const { data } = await supabase
-      .from('lavadas')
-      .select('id, created_at, fue_gratis, empleados(nombre)')
-      .eq('cliente_id', clienteId)
-      .order('created_at', { ascending: false })
-      .limit(10)
+    const { data } = await supabase.from('lavadas').select('id, created_at, fue_gratis, empleados(nombre)').eq('cliente_id', clienteId).order('created_at', { ascending: false }).limit(8)
     setHistorial((data as any) || [])
+  }
+
+  async function abrirTarjeta(cli: Cliente) {
+    setClienteActual(cli); await cargarHistorial(cli.id); setVista('tarjeta')
   }
 
   async function validarCodigo() {
     const code = codigo.join('')
-    if (code.length < 4) {
-      setMsg({ tipo: 'error', texto: 'Ingresa el código completo' })
-      return
-    }
-    if (!cliente) return
-    setRegistrando(true)
-    setMsg(null)
-
-    const res = await fetch('/api/validar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ codigo: code, cliente_id: cliente.id }),
-    })
+    if (code.length < 4) { setMsg({ tipo: 'err', texto: 'Ingresa el código completo' }); return }
+    if (!clienteActual) return
+    setRegistrando(true); setMsg(null)
+    const res = await fetch('/api/validar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codigo: code, cliente_id: clienteActual.id }) })
     const data = await res.json()
-
-    if (!data.ok) {
-      setMsg({ tipo: 'error', texto: data.error })
-    } else {
+    if (!data.ok) { setMsg({ tipo: 'err', texto: data.error }) }
+    else {
       setMsg({ tipo: 'ok', texto: '✓ ¡Lavada registrada! Tus puntos se actualizaron.' })
       setCodigo(['', '', '', ''])
-      // Recargar cliente actualizado
-      const { data: updated } = await supabase
-        .from('clientes')
-        .select('*')
-        .eq('id', cliente.id)
-        .single()
-      if (updated) setCliente(updated)
-      await cargarHistorial(cliente.id)
+      const { data: updated } = await supabase.from('clientes').select('*').eq('id', clienteActual.id).single()
+      if (updated) setClienteActual(updated)
+      await cargarHistorial(clienteActual.id)
     }
     setRegistrando(false)
   }
 
   function handleCodigo(val: string, idx: number) {
     const v = val.replace(/\D/g, '').slice(-1)
-    const next = [...codigo]
-    next[idx] = v
-    setCodigo(next)
-    if (v && idx < 3) {
-      document.getElementById(`cod-${idx + 1}`)?.focus()
-    }
+    const next = [...codigo]; next[idx] = v; setCodigo(next)
+    if (v && idx < 3) (document.getElementById(`cod-${idx + 1}`) as HTMLInputElement)?.focus()
   }
 
-  const ciclo = cliente?.lavadas_ciclo ?? 0
+  const ciclo = clienteActual?.lavadas_ciclo ?? 0
 
-  return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-[#1a1a2e] text-white px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
-        <Link href="/" className="text-gray-300 hover:text-white text-xl">←</Link>
-        <span className="font-semibold">Mi tarjeta fiel</span>
+  if (vista === 'tarjeta' && clienteActual) return (
+    <div style={S.screen}>
+      <div style={S.header}>
+        <button style={S.backBtn} onClick={() => setVista(clientes.length > 0 ? 'lista' : 'form')}>←</button>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Mi tarjeta fiel</span>
       </div>
-
-      {step === 'form' && (
-        <div className="flex flex-col gap-4 p-4">
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h2 className="font-semibold text-gray-800 mb-4">Busca tu cuenta o regístrate</h2>
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Nombre completo</label>
-                <input
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#1a1a2e]"
-                  placeholder="Ej: María García"
-                  value={nombre}
-                  onChange={e => setNombre(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Placa del vehículo</label>
-                <input
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm uppercase focus:outline-none focus:border-[#1a1a2e]"
-                  placeholder="Ej: PCA-1234"
-                  value={placa}
-                  onChange={e => setPlaca(e.target.value.toUpperCase())}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">WhatsApp (con código de país)</label>
-                <input
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#1a1a2e]"
-                  placeholder="Ej: 0991234567"
-                  value={whatsapp}
-                  onChange={e => setWhatsapp(e.target.value)}
-                  type="tel"
-                />
-              </div>
-              {msg && (
-                <p className={`text-sm text-center ${msg.tipo === 'error' ? 'text-red-500' : 'text-green-600'}`}>
-                  {msg.texto}
-                </p>
-              )}
-              <button
-                className="w-full bg-[#1a1a2e] text-white py-3 rounded-xl font-semibold mt-1 active:scale-95 transition-transform disabled:opacity-60"
-                onClick={entrar}
-                disabled={loading}
-              >
-                {loading ? 'Buscando...' : 'Ver mi tarjeta →'}
-              </button>
+      <div style={S.content}>
+        {/* Tarjeta */}
+        <div style={{ background: '#141414', border: '1px solid #1e1e1e', borderRadius: 20, padding: 20, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: -40, right: -40, width: 120, height: 120, background: '#00A65108', borderRadius: '50%' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 11, color: '#a0a0a0', marginBottom: 4, letterSpacing: 1 }}>CLIENTE FIEL</div>
+              <div style={{ fontSize: 19, fontWeight: 800, color: '#fff' }}>{clienteActual.nombre}</div>
             </div>
+            <div style={{ background: '#0a0a0a', border: '1px solid #2a2a2a', padding: '6px 12px', borderRadius: 8, fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#00A651' }}>{clienteActual.placa}</div>
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800 flex gap-2">
-            <span>ℹ️</span>
-            <span>El registro de lavadas lo hace el empleado al terminar. Tú solo ves tu progreso e ingresas el código que te dan.</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: '#a0a0a0' }}>Progreso hacia lavada gratis</span>
+            <span style={{ fontSize: 12, color: '#00A651', fontWeight: 700 }}>{ciclo}/10</span>
           </div>
-        </div>
-      )}
-
-      {step === 'tarjeta' && cliente && (
-        <div className="flex flex-col gap-4 p-4">
-          {/* Tarjeta de puntos */}
-          <div className="bg-[#1a1a2e] rounded-2xl p-5 text-white shadow-lg">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <p className="text-gray-400 text-xs">Hola,</p>
-                <p className="font-bold text-lg">{cliente.nombre}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-gray-400 text-xs">Placa</p>
-                <p className="font-mono font-semibold">{cliente.placa}</p>
-              </div>
-            </div>
-
-            {/* Dots */}
-            <div className="flex gap-2 flex-wrap mb-3">
-              {Array.from({ length: 10 }, (_, i) => (
-                <div
-                  key={i}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center text-lg border-2 transition-all
-                    ${i < ciclo
-                      ? 'bg-[#f0c040] border-[#f0c040] text-[#1a1a2e]'
-                      : i === 9
-                      ? 'border-[#f0c040] border-dashed text-[#f0c040]'
-                      : 'border-white/20 text-white/30'}`}
-                >
-                  {i < ciclo ? '✓' : i === 9 ? '🎁' : '·'}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400 text-sm">{ciclo}/10 lavadas</span>
-              <span className="text-[#f0c040] text-sm font-semibold">
-                {ciclo >= 9 ? '¡Una más para gratis!' : `${10 - ciclo} para tu lavada gratis`}
-              </span>
-            </div>
-
-            {/* Barra de progreso */}
-            <div className="mt-2 bg-white/10 rounded-full h-1.5">
-              <div
-                className="bg-[#f0c040] h-1.5 rounded-full transition-all duration-500"
-                style={{ width: `${ciclo * 10}%` }}
-              />
-            </div>
+          <div style={{ background: '#0a0a0a', borderRadius: 99, height: 6, overflow: 'hidden', marginBottom: 16 }}>
+            <div style={{ height: '100%', background: '#00A651', borderRadius: 99, width: `${ciclo * 10}%`, transition: 'width 0.5s' }} />
           </div>
-
-          {/* Lavada gratis disponible */}
-          {cliente.gratis_disponibles > 0 && (
-            <div className="bg-green-50 border border-green-200 rounded-2xl p-4 flex gap-3 items-center">
-              <span className="text-3xl">🎉</span>
-              <div>
-                <p className="font-bold text-green-800">¡Tienes {cliente.gratis_disponibles} lavada(s) gratis!</p>
-                <p className="text-green-700 text-sm">Dile a la empleada para que te la aplique.</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {Array.from({ length: 10 }, (_, i) => (
+              <div key={i} style={{ width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: i < ciclo ? 14 : 18, border: `1.5px solid ${i < ciclo ? '#00A651' : i === 9 ? '#E8002A' : '#2a2a2a'}`, background: i < ciclo ? '#00A651' : i === 9 ? '#E8002A15' : '#0a0a0a', color: i < ciclo ? '#fff' : i === 9 ? '#E8002A' : '#333' }}>
+                {i < ciclo ? '✓' : i === 9 ? '🎁' : '·'}
               </div>
+            ))}
+          </div>
+          {clienteActual.gratis_disponibles > 0 && (
+            <div style={{ marginTop: 14, background: '#00A65112', border: '1px solid #00A65130', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10 }}>
+              <span>🎉</span>
+              <p style={{ fontSize: 13, color: '#00A651' }}>¡Tienes <strong>{clienteActual.gratis_disponibles} lavada(s) gratis</strong>! Dile a la empleada.</p>
             </div>
           )}
+          {ciclo >= 8 && clienteActual.gratis_disponibles === 0 && (
+            <div style={{ marginTop: 14, background: '#E8002A10', border: '1px solid #E8002A30', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10 }}>
+              <span>⭐</span>
+              <p style={{ fontSize: 13, color: '#E8002A' }}>¡Te faltan {10 - ciclo} para tu lavada gratis!</p>
+            </div>
+          )}
+        </div>
 
-          {/* Ingresar código */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <p className="text-sm text-gray-600 mb-3 font-medium">¿Terminaron tu lavada? Ingresa el código que te dio el empleado:</p>
-            <div className="flex gap-3 justify-center mb-4">
+        {/* Código */}
+        <div style={S.card}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Registrar lavada</div>
+          <div style={{ background: '#0a0a0a', border: '1px solid #00A65130', borderRadius: 14, padding: 18, textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: '#a0a0a0', letterSpacing: 2, marginBottom: 12, textTransform: 'uppercase' }}>Código del empleado</div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 16 }}>
               {[0, 1, 2, 3].map(i => (
-                <input
-                  key={i}
-                  id={`cod-${i}`}
-                  type="number"
-                  inputMode="numeric"
-                  maxLength={1}
-                  className="w-14 h-16 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-[#1a1a2e] focus:outline-none"
-                  value={codigo[i]}
-                  onChange={e => handleCodigo(e.target.value, i)}
-                />
+                <input key={i} id={`cod-${i}`} type="number" inputMode="numeric" maxLength={1}
+                  style={{ width: 56, height: 68, textAlign: 'center', fontSize: 28, fontWeight: 800, background: '#141414', border: '1.5px solid #2a2a2a', borderRadius: 12, color: '#fff', fontFamily: 'monospace' }}
+                  value={codigo[i]} onChange={e => handleCodigo(e.target.value, i)} />
               ))}
             </div>
-            {msg && (
-              <p className={`text-sm text-center mb-3 ${msg.tipo === 'error' ? 'text-red-500' : 'text-green-600'}`}>
-                {msg.texto}
-              </p>
-            )}
-            <button
-              className="w-full bg-[#1a1a2e] text-white py-3 rounded-xl font-semibold active:scale-95 transition-transform disabled:opacity-60"
-              onClick={validarCodigo}
-              disabled={registrando}
-            >
+            {msg && <p style={{ fontSize: 13, color: msg.tipo === 'ok' ? '#00A651' : '#E8002A', marginBottom: 10 }}>{msg.texto}</p>}
+            <button style={S.btnPrimary} onClick={validarCodigo} disabled={registrando}>
               {registrando ? 'Validando...' : 'Registrar lavada'}
             </button>
           </div>
+        </div>
 
-          {/* Historial */}
-          {historial.length > 0 && (
-            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-800 mb-3">Historial de lavadas</h3>
-              <div className="flex flex-col divide-y divide-gray-100">
-                {historial.map(l => (
-                  <div key={l.id} className="py-2.5 flex justify-between items-center">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">
-                        {new Date(l.created_at).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                      <p className="text-xs text-gray-400">por {(l.empleados as any)?.nombre}</p>
-                    </div>
-                    {l.fue_gratis && (
-                      <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full font-medium">Gratis 🎁</span>
-                    )}
-                  </div>
-                ))}
+        {/* Historial */}
+        {historial.length > 0 && (
+          <div style={S.card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Historial</div>
+            {historial.map(l => (
+              <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid #1e1e1e' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{new Date(l.created_at).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                  <div style={{ fontSize: 11, color: '#a0a0a0', marginTop: 2 }}>por {(l.empleados as any)?.nombre}</div>
+                </div>
+                {l.fue_gratis && <span style={{ fontSize: 11, background: '#E8002A15', color: '#E8002A', border: '1px solid #E8002A30', padding: '3px 8px', borderRadius: 99 }}>Gratis 🎁</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <button style={S.btnSecondary} onClick={() => { setVista(clientes.length > 0 ? 'lista' : 'form'); setClienteActual(null) }}>← Volver</button>
+      </div>
+    </div>
+  )
+
+  if (vista === 'lista') return (
+    <div style={S.screen}>
+      <div style={S.header}>
+        <button style={S.backBtn} onClick={() => setVista('form')}>←</button>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Mis vehículos</span>
+      </div>
+      <div style={S.content}>
+        <div style={{ fontSize: 13, color: '#a0a0a0' }}>Selecciona un vehículo para ver tu tarjeta</div>
+        {clientes.map(cli => (
+          <button key={cli.id} onClick={() => abrirTarjeta(cli)} style={{ background: '#141414', border: '1px solid #1e1e1e', borderRadius: 16, padding: 16, cursor: 'pointer', textAlign: 'left', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>{cli.nombre}</div>
+                <div style={{ fontSize: 13, color: '#00A651', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}>{cli.placa}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 22, fontWeight: 900, color: '#00A651' }}>{cli.lavadas_ciclo % 10}/10</div>
+                {cli.gratis_disponibles > 0 && <div style={{ fontSize: 11, color: '#E8002A', fontWeight: 700 }}>🎁 GRATIS</div>}
               </div>
             </div>
-          )}
-
-          <button
-            className="text-center text-sm text-gray-400 py-2"
-            onClick={() => { setStep('form'); setCliente(null); setHistorial([]); setMsg(null) }}
-          >
-            ← Cambiar cuenta
+            <div style={{ display: 'flex', gap: 4 }}>
+              {Array.from({ length: 10 }, (_, i) => (
+                <div key={i} style={{ flex: 1, height: 4, borderRadius: 99, background: i < cli.lavadas_ciclo % 10 ? '#00A651' : '#1e1e1e' }} />
+              ))}
+            </div>
           </button>
-        </div>
-      )}
+        ))}
+        <button style={S.btnSecondary} onClick={() => setVista('form')}>← Volver</button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={S.screen}>
+      <div style={S.header}>
+        <Link href="/" style={{ textDecoration: 'none' }}><button style={S.backBtn}>←</button></Link>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Mi tarjeta fiel</span>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', background: '#141414', borderBottom: '1px solid #1e1e1e' }}>
+        <button style={S.tab(tab === 'registro')} onClick={() => { setTab('registro'); setMsg(null) }}>🚗 Nuevo vehículo</button>
+        <button style={S.tab(tab === 'misVehiculos')} onClick={() => { setTab('misVehiculos'); setMsg(null) }}>📋 Mis vehículos</button>
+      </div>
+
+      <div style={S.content}>
+        {tab === 'registro' && (
+          <>
+            <div style={S.card}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Registrar nuevo vehículo</div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={S.label}>Nombre completo</label>
+                <input style={S.input} placeholder="Ej: María García" value={nombre} onChange={e => setNombre(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={S.label}>Placa del vehículo</label>
+                <input style={{ ...S.input, textTransform: 'uppercase' }} placeholder="Ej: PCA-1234" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={S.label}>WhatsApp</label>
+                <input style={S.input} type="tel" placeholder="Ej: 0991234567" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} />
+              </div>
+              {msg && <p style={{ fontSize: 13, color: msg.tipo === 'ok' ? '#00A651' : '#E8002A', marginBottom: 12, textAlign: 'center' }}>{msg.texto}</p>}
+              <button style={S.btnPrimary} onClick={registrar} disabled={loading}>{loading ? 'Registrando...' : 'Registrar vehículo →'}</button>
+            </div>
+            <div style={{ background: '#E8002A10', border: '1px solid #E8002A30', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10 }}>
+              <span>🔒</span>
+              <p style={{ fontSize: 13, color: '#E8002A', lineHeight: 1.5 }}>El empleado registra tu lavada con un código seguro de 4 dígitos.</p>
+            </div>
+          </>
+        )}
+
+        {tab === 'misVehiculos' && (
+          <>
+            <div style={S.card}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Buscar mis vehículos</div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={S.label}>Tu número de WhatsApp</label>
+                <input style={S.input} type="tel" placeholder="Ej: 0991234567" value={waBuscar} onChange={e => setWaBuscar(e.target.value)} />
+              </div>
+              {msg && <p style={{ fontSize: 13, color: msg.tipo === 'ok' ? '#00A651' : '#E8002A', marginBottom: 12, textAlign: 'center' }}>{msg.texto}</p>}
+              <button style={S.btnPrimary} onClick={buscarVehiculos} disabled={loading}>{loading ? 'Buscando...' : 'Buscar mis vehículos →'}</button>
+            </div>
+            <div style={{ background: '#141414', border: '1px solid #1e1e1e', borderRadius: 12, padding: '12px 14px', display: 'flex', gap: 10 }}>
+              <span>💡</span>
+              <p style={{ fontSize: 13, color: '#a0a0a0', lineHeight: 1.5 }}>Usa el mismo WhatsApp con el que te registraste para ver todos tus vehículos.</p>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
