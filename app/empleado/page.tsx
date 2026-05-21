@@ -20,7 +20,7 @@ const S = {
 
 export default function EmpleadoPage() {
   const [step, setStep] = useState<'login' | 'panel'>('login')
-  const [email, setEmail] = useState('')
+  const [nombre, setNombre] = useState('')
   const [password, setPassword] = useState('')
   const [session, setSession] = useState<Session | null>(null)
   const [loginError, setLoginError] = useState('')
@@ -35,29 +35,35 @@ export default function EmpleadoPage() {
   const [waStatus, setWaStatus] = useState('')
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (data.session) await cargarEmpleado(data.session.user.id)
-    })
-  }, [])
-
-  async function cargarEmpleado(uid: string) {
-    const { data } = await supabase.from('empleados').select('*').eq('id', uid).single()
-    if (data) { setSession({ id: uid, nombre: data.nombre, rol: data.rol }); setStep('panel') }
-    if (data?.rol === 'admin' && typeof window !== 'undefined') window.location.href = '/admin'
-  }
-
   async function login() {
+    if (!nombre.trim() || !password.trim()) { setLoginError('Ingresa tu nombre y contraseña'); return }
     setLoginLoading(true); setLoginError('')
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error || !data.user) { setLoginError('Email o contraseña incorrectos'); setLoginLoading(false); return }
-    await cargarEmpleado(data.user.id)
-    setLoginLoading(false)
-  }
 
-  async function logout() {
-    await supabase.auth.signOut(); setStep('login'); setSession(null)
-    setCliente(null); cancelarCodigo()
+    const { data, error } = await supabase.rpc('verificar_empleado', {
+      p_password: password.trim()
+    })
+
+    if (error || !data?.ok) {
+      setLoginError('Contraseña incorrecta')
+      setLoginLoading(false)
+      return
+    }
+
+    // Verificar que el nombre coincida
+    if (data.nombre.toLowerCase() !== nombre.trim().toLowerCase()) {
+      setLoginError('Nombre o contraseña incorrectos')
+      setLoginLoading(false)
+      return
+    }
+
+    const emp = { id: data.id, nombre: data.nombre, rol: data.rol }
+    setSession(emp)
+    if (data.rol === 'admin' && typeof window !== 'undefined') {
+      window.location.href = '/admin'
+      return
+    }
+    setStep('panel')
+    setLoginLoading(false)
   }
 
   async function buscarCliente() {
@@ -72,16 +78,24 @@ export default function EmpleadoPage() {
   async function generarCodigo(enviarWA: boolean) {
     if (!cliente || !session) return
     setGenerando(true); setWaStatus('')
-    const res = await fetch('/api/codigos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cliente_id: cliente.id, placa: cliente.placa, empleado_id: session.id }) })
+    const res = await fetch('/api/codigos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cliente_id: cliente.id, placa: cliente.placa, empleado_id: session.id })
+    })
     const data = await res.json()
     if (!data.ok) { setWaStatus('❌ Error: ' + data.error); setGenerando(false); return }
     setCodigoActivo(data.codigo)
     iniciarTimer(600)
     if (enviarWA) {
       setWaStatus('Enviando WhatsApp...')
-      const waRes = await fetch('/api/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whatsapp: cliente.whatsapp, codigo: data.codigo, nombre: cliente.nombre, placa: cliente.placa }) })
+      const waRes = await fetch('/api/whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whatsapp: cliente.whatsapp, codigo: data.codigo, nombre: cliente.nombre, placa: cliente.placa })
+      })
       const waData = await waRes.json()
-      setWaStatus(waData.ok ? '✅ Código enviado por WhatsApp a ' + cliente.whatsapp : '⚠️ No se pudo enviar WA')
+      setWaStatus(waData.ok ? '✅ Código enviado por WhatsApp' : '⚠️ No se pudo enviar WA')
     }
     setGenerando(false)
   }
@@ -100,6 +114,12 @@ export default function EmpleadoPage() {
   function cancelarCodigo() {
     if (timerRef.current) clearInterval(timerRef.current)
     setCodigoActivo(null); setTimerSeg(0); setWaStatus('')
+    setCliente(null); setPlaca('')
+  }
+
+  function logout() {
+    setStep('login'); setSession(null); setNombre(''); setPassword('')
+    setCliente(null); cancelarCodigo()
   }
 
   const min = Math.floor(timerSeg / 60), seg = timerSeg % 60
@@ -108,7 +128,7 @@ export default function EmpleadoPage() {
     <div style={S.screen}>
       <div style={S.header}>
         <Link href="/"><button style={{ background: 'none', border: 'none', color: '#a0a0a0', cursor: 'pointer', fontSize: 20 }}>←</button></Link>
-        <span style={{ fontSize: 15, fontWeight: 600 }}>Acceso seguro</span>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Acceso empleados</span>
       </div>
       <div style={S.content}>
         <div style={{ textAlign: 'center', padding: '16px 0' }}>
@@ -120,17 +140,31 @@ export default function EmpleadoPage() {
         </div>
         <div style={S.card}>
           <div style={{ marginBottom: 12 }}>
-            <label style={S.label}>Email</label>
-            <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+            <label style={S.label}>Tu nombre</label>
+            <input
+              style={S.input}
+              placeholder="Ej: Andres"
+              value={nombre}
+              onChange={e => setNombre(e.target.value)}
+            />
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={S.label}>Contraseña</label>
-            <input style={S.input} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && login()} />
+            <input
+              style={S.input}
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && login()}
+            />
           </div>
           {loginError && <p style={{ fontSize: 13, color: '#E8002A', textAlign: 'center', marginBottom: 12 }}>{loginError}</p>}
-          <button style={S.btnPrimary} onClick={login} disabled={loginLoading}>{loginLoading ? 'Entrando...' : 'Entrar al sistema →'}</button>
+          <button style={S.btnPrimary} onClick={login} disabled={loginLoading}>
+            {loginLoading ? 'Verificando...' : 'Entrar al sistema →'}
+          </button>
         </div>
-        <p style={{ fontSize: 11, color: '#333', textAlign: 'center' }}>Las cuentas las crea la administración</p>
+        <p style={{ fontSize: 11, color: '#333', textAlign: 'center' }}>La contraseña la facilita la administración</p>
       </div>
     </div>
   )
@@ -156,8 +190,16 @@ export default function EmpleadoPage() {
         <div style={S.card}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#a0a0a0', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 14 }}>Registrar lavada</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input style={{ ...S.input, flex: 1, textTransform: 'uppercase' }} placeholder="Placa del vehículo" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && buscarCliente()} />
-            <button onClick={buscarCliente} disabled={buscando} style={{ background: '#00A651', border: 'none', color: '#fff', padding: '0 18px', borderRadius: 10, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>{buscando ? '...' : 'Buscar'}</button>
+            <input
+              style={{ ...S.input, flex: 1, textTransform: 'uppercase' }}
+              placeholder="Placa del vehículo"
+              value={placa}
+              onChange={e => setPlaca(e.target.value.toUpperCase())}
+              onKeyDown={e => e.key === 'Enter' && buscarCliente()}
+            />
+            <button onClick={buscarCliente} disabled={buscando} style={{ background: '#00A651', border: 'none', color: '#fff', padding: '0 18px', borderRadius: 10, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+              {buscando ? '...' : 'Buscar'}
+            </button>
           </div>
           {buscarError && <p style={{ fontSize: 13, color: '#E8002A', marginTop: 10 }}>{buscarError}</p>}
         </div>
@@ -177,8 +219,12 @@ export default function EmpleadoPage() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
-              <button style={S.btnPrimary} onClick={() => generarCodigo(false)} disabled={generando}>{generando ? 'Generando...' : '📋 Mostrar código en pantalla'}</button>
-              <button style={S.btnSecondary} onClick={() => generarCodigo(true)} disabled={generando}>{generando ? 'Enviando...' : '📲 Generar y enviar por WhatsApp'}</button>
+              <button style={S.btnPrimary} onClick={() => generarCodigo(false)} disabled={generando}>
+                {generando ? 'Generando...' : '📋 Mostrar código en pantalla'}
+              </button>
+              <button style={S.btnSecondary} onClick={() => generarCodigo(true)} disabled={generando}>
+                {generando ? 'Enviando...' : '📲 Generar y enviar por WhatsApp'}
+              </button>
             </div>
             {waStatus && <p style={{ fontSize: 13, color: waStatus.includes('✅') ? '#00A651' : '#E8002A', marginTop: 10, textAlign: 'center' }}>{waStatus}</p>}
           </div>
@@ -198,8 +244,12 @@ export default function EmpleadoPage() {
             </div>
             {waStatus && <p style={{ fontSize: 13, color: waStatus.includes('✅') ? '#00A651' : '#a0a0a0', marginTop: 10, textAlign: 'center' }}>{waStatus}</p>}
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button onClick={() => generarCodigo(true)} disabled={generando} style={{ flex: 1, background: 'transparent', color: '#00A651', border: '1px solid #00A65140', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>📲 Reenviar WA</button>
-              <button onClick={cancelarCodigo} style={{ flex: 1, background: 'transparent', color: '#E8002A', border: '1px solid #E8002A30', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={() => generarCodigo(true)} disabled={generando} style={{ flex: 1, background: 'transparent', color: '#00A651', border: '1px solid #00A65140', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                📲 Reenviar WA
+              </button>
+              <button onClick={cancelarCodigo} style={{ flex: 1, background: 'transparent', color: '#E8002A', border: '1px solid #E8002A30', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                Cancelar
+              </button>
             </div>
           </div>
         )}
