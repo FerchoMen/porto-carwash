@@ -3,17 +3,35 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 
 export async function POST(req: NextRequest) {
   try {
-    const { nombre, password } = await req.json()
-    if (!nombre || !password) return NextResponse.json({ ok: false, error: 'Faltan datos' })
+    const { codigo, cliente_id } = await req.json()
+
+    if (!codigo || !cliente_id) {
+      return NextResponse.json({ ok: false, error: 'Faltan parámetros' }, { status: 400 })
+    }
+
+    if (!/^\d{4}$/.test(codigo)) {
+      return NextResponse.json({ ok: false, error: 'Código inválido' }, { status: 400 })
+    }
 
     const supabaseAdmin = getSupabaseAdmin()
-    const { data, error } = await supabaseAdmin.rpc('verificar_empleado', { p_password: password })
 
-    if (error || !data?.ok) return NextResponse.json({ ok: false, error: 'Contraseña incorrecta' })
-    if (data.nombre.toLowerCase() !== nombre.trim().toLowerCase()) return NextResponse.json({ ok: false, error: 'Nombre o contraseña incorrectos' })
+    const { data, error } = await supabaseAdmin.rpc('registrar_lavada', {
+      p_codigo: codigo,
+      p_cliente_id: cliente_id,
+    })
 
-    return NextResponse.json({ ok: true, id: data.id, nombre: data.nombre, rol: data.rol })
+    if (error) {
+      console.error('Error RPC registrar_lavada:', error)
+      return NextResponse.json({ ok: false, error: 'Error interno al registrar' }, { status: 500 })
+    }
+
+    if (!data?.ok) {
+      return NextResponse.json({ ok: false, error: data?.error || 'Código inválido o expirado' })
+    }
+
+    return NextResponse.json({ ok: true, lavadas_ciclo: data.lavadas_ciclo })
   } catch (err) {
+    console.error(err)
     return NextResponse.json({ ok: false, error: 'Error interno' }, { status: 500 })
   }
 }
